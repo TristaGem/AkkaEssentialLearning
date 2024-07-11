@@ -8,7 +8,6 @@ object VoterExample extends App{
   case class Vote(candidate: String)
   case object VoteStatusRequest
   case class VoteStatusReply(candidate: Option[String])
-  case class VoteStatusPrint(candidate: Option[String])
   class Citizen extends Actor {
     override def receive: Receive = voteHandler("")
     def voteHandler(choice: String): Receive = {
@@ -24,29 +23,22 @@ object VoterExample extends App{
 
   case class AggregateVotes(citizens: Set[ActorRef])
   class VoteAggregator extends Actor {
-    override def receive: Receive = countVote(new mutable.HashMap[String, Int]())
+    override def receive: Receive = countVote(Set(), new mutable.HashMap[String, Int]())
 
-    def countVote(voteMap: mutable.HashMap[String, Int]): Receive = {
+    def countVote(stillWaiting: Set[ActorRef], voteMap: mutable.HashMap[String, Int]): Receive = {
       case AggregateVotes(citizens: Set[ActorRef]) =>
         for (elem <- citizens) {
           elem ! VoteStatusRequest
         }
-      case VoteStatusReply(candidate: Option[String]) =>
-        candidate match {
-          case Some(candidate) =>
-            voteMap.put(candidate, voteMap.getOrElse(candidate, 0)+1)
-            context.become(countVote(voteMap))
-          case None =>
-        }
-
-      case VoteStatusPrint(candidate: Option[String]) =>
-        candidate match {
-          case Some(cand) =>
-            val votes = voteMap.getOrElse(cand, 0)
-            println(s"Candidate $cand get $votes")
-          case None =>
-            println("Candidates can't be None")
-        }
+        context.become(countVote(citizens, voteMap))
+      case VoteStatusReply(None) =>
+        sender() ! VoteStatusRequest
+      case VoteStatusReply(Some(candidate)) =>
+        voteMap.put(candidate, voteMap.getOrElse(candidate, 0)+1)
+        val newStillWaiting = stillWaiting - sender()
+        context.become(countVote(newStillWaiting, voteMap))
+        if(newStillWaiting.isEmpty)
+          println(s"[aggregator] poll stats: $voteMap")
     }
   }
   val system = ActorSystem("CounterDemo")
@@ -63,9 +55,5 @@ object VoterExample extends App{
 
 
   voteAggregator ! AggregateVotes(Set(alice, bob, charlie, daniel))
-  Thread.sleep(3000)
-  voteAggregator ! VoteStatusPrint(Some("Martin"))
-  voteAggregator ! VoteStatusPrint(Some("Jonas"))
-  voteAggregator ! VoteStatusPrint(Some("Roland"))
 
 }
